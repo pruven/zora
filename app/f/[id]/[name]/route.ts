@@ -1,5 +1,5 @@
 import { findFile } from "@/lib/files";
-import { getObject, isCloud, downloadURL } from "@/lib/storage";
+import { getObject, isCloud, downloadURL, disposition } from "@/lib/storage";
 import { appURL } from "@/lib/config";
 import { HttpError } from "@/lib/errors";
 export const runtime = "nodejs";
@@ -67,7 +67,7 @@ export async function GET(
         ...headers,
         "Content-Type": file.mime,
         "Content-Length": String(body.length),
-        "Content-Disposition": `${isolated ? "inline" : "attachment"}; filename="download.${file.name.split(".").pop()}"; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`)}`,
+        "Content-Disposition": disposition(file.name, !!isolated),
       },
     });
   } catch (error) {

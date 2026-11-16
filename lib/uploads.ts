@@ -55,7 +55,11 @@ export async function completeUpload(id: string, userId: string) {
   const file = await findFile(id, userId);
   if (!file || file.status === "deleting")
     throw new HttpError(404, "File not found.");
-  if (file.status === "ready") return file;
+  if (file.status === "ready") {
+    if (file.expiresAt <= Date.now())
+      throw new HttpError(410, "This file has expired.");
+    return file;
+  }
   if (
     file.uploadExpiresAt === null ||
     file.stagingSize === null ||
