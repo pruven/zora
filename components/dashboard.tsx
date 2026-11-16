@@ -197,6 +197,7 @@ export function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: file.name, size: file.size }),
+        signal: AbortSignal.timeout(30_000),
       });
       const target = await initialized.json();
       if (!initialized.ok)
@@ -237,13 +238,21 @@ export function Dashboard() {
       setUpload({ name: file.name, progress: 100, processing: true });
       const completed = await fetch(`/api/files/${target.id}/complete`, {
         method: "POST",
+        // Bound the client wait beyond the server's 120-second completion budget.
+        signal: AbortSignal.timeout(150_000),
       });
       const result = await completed.json();
       if (!completed.ok)
         throw new Error(result.error || "Could not finish the upload.");
       setMessage(`${result.file.name} is ready to share.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Upload failed.");
+      setError(
+        cause instanceof Error && cause.name === "TimeoutError"
+          ? "The request timed out. Refresh your files before trying again; processing may still finish."
+          : cause instanceof Error
+            ? cause.message
+            : "Upload failed.",
+      );
       // Do not cancel a completion that may still be running after a network error.
       // Its retained reservation and private staging object are recovered by cleanup.
     } finally {

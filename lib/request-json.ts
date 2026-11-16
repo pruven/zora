@@ -4,7 +4,12 @@ export async function readJSON(
   request: Request,
   maxBytes = 2048,
 ): Promise<Record<string, unknown>> {
-  if (!request.headers.get("content-type")?.startsWith("application/json"))
+  const mediaType = request.headers
+    .get("content-type")
+    ?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (mediaType !== "application/json")
     throw new HttpError(415, "Send a JSON request.");
   if (Number(request.headers.get("content-length")) > maxBytes)
     throw new HttpError(413, "Request is too large.");

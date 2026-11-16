@@ -442,6 +442,9 @@ for (const cloud of [false, true])
           .set({ expiresAt: Date.now() - 1 })
           .where(eq(files.id, expired.id));
         assert.equal((await fetch(expired.url)).status, 410);
+        const expiredCompletion = await finish(expired.id);
+        assert.equal(expiredCompletion.status, 410);
+        assert.match((await expiredCompletion.json()).error, /expired/);
         assert.equal(
           (await fetch(`${base}/api/cleanup`, { method: "POST" })).status,
           401,

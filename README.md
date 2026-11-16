@@ -118,7 +118,7 @@ The same code can run on another Node.js host with PostgreSQL TCP access. With P
 
 ## Expiry and physical deletion
 
-The ten-day expiry starts when validation finishes. The app gateway rejects new requests after the deadline; each signed R2 download URL also expires no later than that deadline. Recipients can keep copies, and downloads that started before expiry can finish afterward. Deletion hides the file immediately and removes the published R2 object.
+The ten-day expiry is recorded when the file is published, after validation and successful storage of the final object. The app gateway rejects new requests after the deadline; each signed R2 download URL also expires no later than that deadline. Recipients can keep copies, and downloads that started before expiry can finish afterward. Deletion hides the file immediately and removes the published R2 object.
 
 Staging objects and reservations remain until the upload URL has expired plus a one-hour grace period. This prevents an issued PUT URL from recreating a deleted staging key while it is still valid, and allows for in-flight requests. Failed, cancelled, and abandoned uploads remain private and count toward capacity during that interval. A recently cancelled processing request retains its reservation for an hour as well. Cleanup then removes staging, releases its reserved bytes, retries failed deletions, and recovers stuck processing. Configure the provider lifecycle backstop for crashes and unusually delayed requests; the application meter is not a provider-enforced billing cap.
 

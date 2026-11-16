@@ -12,6 +12,25 @@ test("signed staging PUTs bind size, conditional write, and cache headers", asyn
   assert.equal(url.searchParams.get("X-Amz-Expires"), "300");
   assert.match(url.searchParams.get("X-Amz-SignedHeaders")!, /content-length/);
   assert.match(url.searchParams.get("X-Amz-SignedHeaders")!, /if-none-match/);
+  assert.ok(
+    url.searchParams
+      .get("X-Amz-SignedHeaders")!
+      .split(";")
+      .includes("cache-control"),
+  );
+  assert.equal(
+    (
+      await fetch(target.url, {
+        method: "PUT",
+        headers: {
+          ...target.headers,
+          "Cache-Control": "public, max-age=86400",
+        },
+        body: "abc",
+      })
+    ).status,
+    403,
+  );
   assert.equal(
     (
       await fetch(target.url, {
