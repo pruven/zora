@@ -1,6 +1,7 @@
 import { findFile } from "@/lib/files";
-import { getObject } from "@/lib/storage";
+import { getObject, isCloud, downloadURL } from "@/lib/storage";
 import { appURL } from "@/lib/config";
+import { HttpError } from "@/lib/errors";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(
@@ -27,7 +28,29 @@ export async function GET(
       process.env.FILE_BASE_URL &&
       new URL(process.env.FILE_BASE_URL).origin !== new URL(appURL()).origin &&
       new URL(request.url).origin === new URL(process.env.FILE_BASE_URL).origin;
-    const body = await getObject(id);
+    if (isCloud()) {
+      const url = await downloadURL(
+        file.objectKey || id,
+        file.name,
+        file.expiresAt,
+        !!isolated,
+      );
+      const current = await findFile(id);
+      if (
+        !current ||
+        current.status !== "ready" ||
+        current.expiresAt <= Date.now()
+      )
+        return new Response("This file is no longer available.", {
+          status: 410,
+          headers,
+        });
+      return new Response(null, {
+        status: 302,
+        headers: { ...headers, Location: url },
+      });
+    }
+    const body = await getObject(file.objectKey || id);
     // Recheck after origin I/O so an expiry during retrieval cannot open a new download.
     const current = await findFile(id);
     if (
@@ -48,6 +71,8 @@ export async function GET(
       },
     });
   } catch (error) {
+    if (error instanceof HttpError && error.status === 410)
+      return new Response(error.message, { status: 410, headers });
     console.error("Download failed:", error);
     return new Response("File is temporarily unavailable.", {
       status: 503,
