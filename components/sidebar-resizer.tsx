@@ -74,10 +74,11 @@ export function useSidebarResize() {
   }, [resizing]);
 
   function finish() {
-    if (!drag.current) return;
+    const start = drag.current;
+    if (!start) return;
     drag.current = null;
     setResizing(false);
-    remember(currentWidth.current);
+    if (currentWidth.current !== start.width) remember(currentWidth.current);
   }
 
   const handle = (
@@ -119,7 +120,13 @@ export function useSidebarResize() {
       onLostPointerCapture={finish}
       onDoubleClick={() => {
         const fallback = window.innerWidth <= 1200 ? 224 : 248;
-        remember(applyWidth(fallback));
+        preferred.current = null;
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          // Reset still restores responsive defaults without browser storage.
+        }
+        applyWidth(fallback);
       }}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 32 : 12;

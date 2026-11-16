@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDownToLine,
   Search,
@@ -141,6 +148,24 @@ export function Dashboard() {
   const input = useRef<HTMLInputElement>(null);
   const activeRequest = useRef<XMLHttpRequest | null>(null);
   const userId = session?.user.id;
+  const currentUser = useRef(userId);
+  const refreshGeneration = useRef(0);
+  const storageFull = !!capacity && capacity.used >= capacity.total;
+  const uploadDisabled = isPending || !!upload || storageFull;
+
+  useLayoutEffect(() => {
+    currentUser.current = userId;
+    refreshGeneration.current += 1;
+    setFiles([]);
+    setFilesError("");
+    setLoadingFiles(isPending || !!userId);
+    setCapacity(null);
+    setLatestFile(null);
+    setDeleting(null);
+    return () => {
+      refreshGeneration.current += 1;
+    };
+  }, [userId, isPending]);
   useEffect(() => {
     if (!menuOpen) return;
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -159,36 +184,44 @@ export function Dashboard() {
   }, [menuOpen]);
 
   const refresh = useCallback(async () => {
+    if (isPending || currentUser.current !== userId) return;
+    const generation = ++refreshGeneration.current;
+    const isCurrent = () =>
+      generation === refreshGeneration.current &&
+      currentUser.current === userId;
     await Promise.all([
       (async () => {
         try {
           const response = await fetch("/api/storage", { cache: "no-store" });
           if (!response.ok) throw new Error();
-          setCapacity(await response.json());
+          const data = await response.json();
+          if (!isCurrent()) return;
+          setCapacity(data);
           setStorageError(false);
         } catch {
-          setStorageError(true);
+          if (isCurrent()) setStorageError(true);
         }
       })(),
       (async () => {
-        if (isPending) return;
         try {
           if (userId) {
             const response = await fetch("/api/files", { cache: "no-store" });
             const data = await response.json();
             if (!response.ok)
               throw new Error(data.error || "Could not load files.");
+            if (!isCurrent()) return;
             setFiles(data.files);
           } else {
             setFiles([]);
           }
-          setFilesError("");
+          if (isCurrent()) setFilesError("");
         } catch (cause) {
+          if (!isCurrent()) return;
           setFilesError(
             cause instanceof Error ? cause.message : "Could not load files.",
           );
         } finally {
-          setLoadingFiles(false);
+          if (isCurrent()) setLoadingFiles(false);
         }
       })(),
     ]);
@@ -215,6 +248,11 @@ export function Dashboard() {
   }, []);
 
   function chooseFile() {
+    if (isPending || upload) return;
+    if (storageFull) {
+      setError("Shared storage is full. Try again after some files expire.");
+      return;
+    }
     setError("");
     if (!session) {
       setAuthError("");
@@ -224,7 +262,11 @@ export function Dashboard() {
     input.current?.click();
   }
   async function sendFile(file: File) {
-    if (upload) return;
+    if (isPending || upload) return;
+    if (storageFull) {
+      setError("Shared storage is full. Try again after some files expire.");
+      return;
+    }
     setError("");
     if (!session) {
       setAuthError("");
@@ -400,13 +442,14 @@ export function Dashboard() {
         </div>
         <button
           className="button button-primary sidebar-upload"
-          disabled={isPending || !!upload}
+          disabled={uploadDisabled}
           onClick={() => {
             setMenuOpen(false);
             chooseFile();
           }}
         >
-          <Plus size={18} /> Upload a file <span>↑</span>
+          <Plus size={18} /> {storageFull ? "Storage is full" : "Upload a file"}{" "}
+          <span>↑</span>
         </button>
         <div className="sidebar-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="File navigation">
@@ -536,6 +579,8 @@ export function Dashboard() {
                       disabled={!!upload}
                       onClick={async () => {
                         await authClient.signOut();
+                        refreshGeneration.current += 1;
+                        setFilesError("");
                         setFiles([]);
                         setLatestFile(null);
                       }}
@@ -668,16 +713,11 @@ export function Dashboard() {
                 ) : (
                   <button
                     className="button button-primary"
-                    disabled={
-                      isPending ||
-                      (!!capacity && capacity.used >= capacity.total)
-                    }
+                    disabled={uploadDisabled}
                     onClick={chooseFile}
                   >
                     <Plus size={18} />
-                    {capacity && capacity.used >= capacity.total
-                      ? "Storage is full"
-                      : "Choose a file"}
+                    {storageFull ? "Storage is full" : "Choose a file"}
                     <ChevronRight size={15} />
                   </button>
                 )}
@@ -965,7 +1005,7 @@ export function Dashboard() {
                 </div>
                 <button
                   className="text-button"
-                  disabled={isPending}
+                  disabled={uploadDisabled}
                   onClick={chooseFile}
                 >
                   <Plus size={15} />
