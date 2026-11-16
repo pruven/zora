@@ -1305,7 +1305,9 @@ form input::placeholder {
     visibility: hidden;
     transform: translateX(-100%);
     width: 250px;
-    transition: transform 0.2s;
+    transition:
+      transform 0.2s,
+      visibility 0.2s;
   }
   .sidebar.is-open {
     visibility: visible;
