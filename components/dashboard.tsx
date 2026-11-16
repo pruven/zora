@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  Search,
+  FolderOpen,
+  LayoutGrid,
+  List,
+  Menu,
+  HelpCircle,
+  RefreshCw,
+  AlertCircle,
   ArrowUpRight,
   Check,
   CheckCheck,
@@ -15,7 +23,6 @@ import {
   Flag,
   Globe2,
   HardDrive,
-  Link2,
   LoaderCircle,
   LogOut,
   Plus,
@@ -25,6 +32,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useSidebarResize } from "@/components/sidebar-resizer";
 import { authClient } from "@/lib/auth-client";
 import { ACCEPT, MAX_FILE_BYTES } from "@/lib/config";
 
@@ -68,19 +76,24 @@ function Modal({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     ref.current?.showModal();
   }, []);
   return (
     <dialog
       ref={ref}
-      onCancel={close}
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) close();
       }}
     >
       <div className="dialog-top">
-        <h2>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button
           className="icon-button"
           onClick={close}
@@ -95,7 +108,17 @@ function Modal({
 }
 
 export function Dashboard() {
+  const { sidebarStyle, resizeHandle } = useSidebarResize();
   const { data: session, isPending } = authClient.useSession();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [fileType, setFileType] = useState("all");
+  const [view, setView] = useState<"list" | "grid">("list");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("newest");
+  const [loadingFiles, setLoadingFiles] = useState(true);
+  const [filesError, setFilesError] = useState("");
+  const [storageError, setStorageError] = useState(false);
+  const [latestFile, setLatestFile] = useState<SharedFile | null>(null);
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [capacity, setCapacity] = useState<Capacity | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -118,30 +141,58 @@ export function Dashboard() {
   const input = useRef<HTMLInputElement>(null);
   const activeRequest = useRef<XMLHttpRequest | null>(null);
   const userId = session?.user.id;
+  useEffect(() => {
+    if (!menuOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.querySelector<HTMLButtonElement>(".mobile-close")?.focus();
+    const onResize = () => {
+      if (window.innerWidth > 820) setMenuOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("resize", onResize);
+      previousFocus?.focus();
+    };
+  }, [menuOpen]);
 
   const refresh = useCallback(async () => {
-    try {
-      const storageResponse = await fetch("/api/storage", {
-        cache: "no-store",
-      });
-      if (!storageResponse.ok)
-        throw new Error("Could not load storage capacity.");
-      setCapacity(await storageResponse.json());
-      if (userId) {
-        const response = await fetch("/api/files", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok)
-          throw new Error(data.error || "Could not load files.");
-        setFiles(data.files);
-      } else setFiles([]);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not refresh your files.",
-      );
-    }
-  }, [userId]);
+    await Promise.all([
+      (async () => {
+        try {
+          const response = await fetch("/api/storage", { cache: "no-store" });
+          if (!response.ok) throw new Error();
+          setCapacity(await response.json());
+          setStorageError(false);
+        } catch {
+          setStorageError(true);
+        }
+      })(),
+      (async () => {
+        if (isPending) return;
+        try {
+          if (userId) {
+            const response = await fetch("/api/files", { cache: "no-store" });
+            const data = await response.json();
+            if (!response.ok)
+              throw new Error(data.error || "Could not load files.");
+            setFiles(data.files);
+          } else {
+            setFiles([]);
+          }
+          setFilesError("");
+        } catch (cause) {
+          setFilesError(
+            cause instanceof Error ? cause.message : "Could not load files.",
+          );
+        } finally {
+          setLoadingFiles(false);
+        }
+      })(),
+    ]);
+  }, [userId, isPending]);
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 30_000);
@@ -246,6 +297,8 @@ export function Dashboard() {
       const result = await completed.json();
       if (!completed.ok)
         throw new Error(result.error || "Could not finish the upload.");
+      setLatestFile(result.file);
+      setQuery("");
       setMessage(`${result.file.name} is ready to share.`);
     } catch (cause) {
       const timeoutMessage = completionRequested
@@ -277,393 +330,666 @@ export function Dashboard() {
       );
     }
   }
-  const percent = capacity ? (capacity.used / capacity.total) * 100 : 0;
+  const percent = capacity
+    ? Math.min(100, Math.max(0, (capacity.used / capacity.total) * 100))
+    : 0;
+  const visibleFiles = files
+    .filter(
+      (file) =>
+        file.name.toLowerCase().includes(query.toLowerCase()) &&
+        (fileType === "all" || file.mime.startsWith(`${fileType}/`)),
+    )
+    .sort((a, b) =>
+      sort === "name"
+        ? a.name.localeCompare(b.name)
+        : sort === "expiring"
+          ? a.expiresAt - b.expiresAt
+          : b.createdAt - a.createdAt,
+    );
+
   return (
-    <div className="site-shell">
-      <header className="header wrap">
-        <a href="/" className="brand" aria-label="Zora home">
-          <Sun size={28} strokeWidth={1.7} />
-          zora
-        </a>
-        <nav aria-label="Main navigation">
-          <a href="#files" className="nav-link">
-            Your files
+    <div className="site-shell" style={sidebarStyle}>
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      {menuOpen && (
+        <button
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+      <aside
+        className={`sidebar ${menuOpen ? "is-open" : ""}`}
+        aria-label="Workspace sidebar"
+        id="workspace-sidebar"
+        onKeyDown={(event) => {
+          if (!menuOpen) return;
+          if (event.key === "Escape") setMenuOpen(false);
+          if (event.key === "Tab") {
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                "a[href], button:not(:disabled)",
+              ),
+            ).filter((item) => item.offsetParent !== null);
+            const first = items[0];
+            const last = items[items.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            }
+            if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}
+      >
+        <div className="sidebar-brand">
+          <a href="/" className="brand" aria-label="Zora home">
+            <Sun size={30} strokeWidth={1.7} />
+            zora<span> / share</span>
           </a>
-          <button className="nav-link" onClick={() => setRules(true)}>
-            How it works <ArrowUpRight size={14} />
+          <button
+            className="icon-button mobile-close"
+            aria-label="Close navigation"
+            onClick={() => setMenuOpen(false)}
+          >
+            <X size={20} />
           </button>
-        </nav>
-        <div className="account">
-          {session ? (
-            <>
-              <span className="account-name">{session.user.name}</span>
-              <button
-                className="icon-button"
-                aria-label="Sign out"
-                disabled={!!upload}
-                onClick={async () => {
-                  await authClient.signOut();
-                  setFiles([]);
-                }}
-              >
-                <LogOut size={18} />
-              </button>
-            </>
-          ) : (
+        </div>
+        <button
+          className="button button-primary sidebar-upload"
+          disabled={isPending || !!upload}
+          onClick={() => {
+            setMenuOpen(false);
+            chooseFile();
+          }}
+        >
+          <Plus size={18} /> Upload a file <span>↑</span>
+        </button>
+        <div className="sidebar-label">WORKSPACE</div>
+        <nav className="side-nav" aria-label="File navigation">
+          {[
+            { id: "all", name: "All files", icon: FolderOpen },
+            { id: "image", name: "Images", icon: FileImage },
+            { id: "audio", name: "Audio", icon: FileAudio },
+            { id: "video", name: "Video", icon: FileVideo },
+          ].map(({ id, name, icon: Icon }) => (
             <button
-              className="button button-secondary"
-              disabled={isPending}
+              key={id}
+              className={`side-link ${fileType === id ? "active" : ""}`}
+              aria-pressed={fileType === id}
               onClick={() => {
-                setAuthError("");
-                setAuthOpen(true);
+                setFileType(id);
+                setMenuOpen(false);
+                document
+                  .getElementById("files")
+                  ?.scrollIntoView({ behavior: "smooth" });
               }}
             >
-              Sign in <ArrowUpRight size={15} />
+              <Icon size={18} />
+              {name}
+              <span>
+                {session
+                  ? files.filter(
+                      (file) => id === "all" || file.mime.startsWith(`${id}/`),
+                    ).length
+                  : "—"}
+              </span>
             </button>
-          )}
-        </div>
-      </header>
-      <main className="wrap">
-        <section className="intro" aria-labelledby="main-title">
-          <div>
-            <div className="eyebrow">
-              <span className="status-dot" />
-              Small files. Shared freely.
-            </div>
-            <h1 id="main-title">
-              Temporary files.
-              <br />
-              <span>Ready to share.</span>
-            </h1>
-          </div>
-          <p>
-            A direct link for the things you need to send.
-            <br />
-            Up to 10 MB. Gone in 10 days.
-          </p>
-        </section>
-        <div className="workspace">
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
           <section
-            className={`upload-panel ${dragging ? "dragging" : ""}`}
-            aria-labelledby="upload-heading"
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node))
-                setDragging(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              if (e.dataTransfer.files.length !== 1) {
-                setError("Upload one file at a time.");
-                return;
-              }
-              void sendFile(e.dataTransfer.files[0]);
-            }}
+            className="capacity-panel"
+            aria-labelledby="capacity-heading"
           >
             <div className="panel-label">
               <span>
-                <Upload size={15} />
-                New upload
+                <Globe2 size={15} />
+                Shared space
               </span>
-              <span className="subtle">01 — 10 MB max</span>
             </div>
-            <div className="drop-content">
-              <div className="upload-glyph">
-                <Upload size={33} strokeWidth={1.35} />
+            <h2 id="capacity-heading">Community storage</h2>
+            <div className="capacity-numbers">
+              <strong>{capacity ? bytes(capacity.used) : "—"}</strong>
+              <span>/ {capacity ? bytes(capacity.total) : "9.50 GB"}</span>
+            </div>
+            <div
+              className="progress-track capacity-track"
+              role="progressbar"
+              aria-label="Global storage used"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(percent)}
+            >
+              <div style={{ width: `${Math.min(percent, 100)}%` }} />
+            </div>
+            <div className="capacity-legend">
+              <span>
+                <i />
+                {storageError
+                  ? "Capacity unavailable"
+                  : capacity
+                    ? `${Math.max(0, 100 - percent).toFixed(1)}% available`
+                    : "Loading capacity…"}
+              </span>
+              <span>used + reserved</span>
+            </div>
+            <p>Expired files free up space for everyone.</p>
+            {storageError && (
+              <button className="text-button" onClick={() => void refresh()}>
+                <RefreshCw size={14} /> Retry capacity
+              </button>
+            )}
+          </section>
+
+          <button
+            className="sidebar-help"
+            onClick={() => {
+              setRules(true);
+              setMenuOpen(false);
+            }}
+          >
+            <HelpCircle size={17} />
+            How Zora works
+            <ArrowUpRight size={14} />
+          </button>
+          <button
+            className="sidebar-help"
+            onClick={() => {
+              setReporting(true);
+              setMenuOpen(false);
+            }}
+          >
+            <Flag size={16} />
+            Report a file
+            <ArrowUpRight size={14} />
+          </button>
+          <div className="sidebar-foot">
+            <span className="status-dot" /> Temporary by design.
+          </div>
+        </div>
+      </aside>
+      {resizeHandle}
+      <div className="app-body">
+        <main className="wrap" id="main-content">
+          <section className="intro" aria-labelledby="main-title">
+            <div className="intro-actions">
+              <button
+                className="icon-button menu-toggle"
+                aria-label="Open navigation"
+                aria-expanded={menuOpen}
+                aria-controls="workspace-sidebar"
+                onClick={() => setMenuOpen(!menuOpen)}
+              >
+                <Menu size={20} />
+              </button>
+              <div className="account">
+                {session ? (
+                  <>
+                    <span className="account-name">{session.user.name}</span>
+                    <button
+                      className="icon-button"
+                      aria-label="Sign out"
+                      disabled={!!upload}
+                      onClick={async () => {
+                        await authClient.signOut();
+                        setFiles([]);
+                        setLatestFile(null);
+                      }}
+                    >
+                      <LogOut size={18} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="button button-secondary"
+                    disabled={isPending}
+                    onClick={() => {
+                      setAuthError("");
+                      setAuthOpen(true);
+                    }}
+                  >
+                    Sign in <ArrowUpRight size={15} />
+                  </button>
+                )}
               </div>
-              <h2 id="upload-heading">
-                {upload
-                  ? upload.processing
-                    ? "Checking your file…"
-                    : "Sending your file…"
-                  : dragging
-                    ? "Drop it right here"
-                    : "Drop a file, get a link."}
-              </h2>
-              <p>
-                {upload
-                  ? upload.name
-                  : "A photo, a clip, a recording. Make it shareable."}
-              </p>
-              {upload ? (
-                <div className="upload-progress">
-                  <div className="progress-track">
-                    <div style={{ width: `${upload.progress}%` }} />
-                  </div>
-                  <span>
-                    {upload.processing
-                      ? "Validating and saving securely"
-                      : `${upload.progress}% uploaded`}
-                  </span>
-                </div>
-              ) : (
-                <button
-                  className="button button-primary"
-                  disabled={
-                    isPending || (!!capacity && capacity.used >= capacity.total)
-                  }
-                  onClick={chooseFile}
-                >
-                  <Plus size={18} />
-                  {capacity && capacity.used >= capacity.total
-                    ? "Storage is full"
-                    : "Choose a file"}
-                  <ChevronRight size={15} />
-                </button>
-              )}
-              <input
-                ref={input}
-                type="file"
-                accept={ACCEPT}
-                className="visually-hidden"
-                aria-label="Choose a file to upload"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void sendFile(file);
-                  e.target.value = "";
-                }}
-              />
-              {!upload && (
-                <span className="upload-hint">or drag and drop it here</span>
-              )}
             </div>
-            <div className="upload-bottom">
-              <span>
-                <Clock3 size={15} />
-                Auto-expires in 10 days
-              </span>
-              <span>
-                <ShieldCheck size={15} />
-                No scripts or executables
-              </span>
+            <div className="intro-copy">
+              <div className="eyebrow">YOUR SHARING SPACE</div>
+              <h1 id="main-title">
+                A little less keeping.
+                <br className="mobile-title-break" />{" "}
+                <span>A little more sharing.</span>
+              </h1>
+              <p>Upload a file, grab a link, and carry on.</p>
             </div>
           </section>
-          <aside className="side-panels">
+          <div className="workspace">
+            <div className="upload-story">
+              <span className="hero-label">
+                <span className="status-dot" /> MADE FOR THE MOMENT
+              </span>
+              <h2>
+                Send the file.
+                <br />
+                <span>Keep things moving.</span>
+              </h2>
+              <p>
+                A photo, a clip, a recording. Give it a link and send it on its
+                way.
+              </p>
+              <div className="format-stack" aria-hidden="true">
+                <div className="format-tile format-image">
+                  <FileImage size={27} strokeWidth={1.4} />
+                  <span>JPG</span>
+                </div>
+                <div className="format-tile format-audio">
+                  <FileAudio size={27} strokeWidth={1.4} />
+                  <span>MP3</span>
+                </div>
+                <div className="format-tile format-video">
+                  <FileVideo size={27} strokeWidth={1.4} />
+                  <span>MP4</span>
+                </div>
+                <span className="format-note">
+                  Small files.
+                  <br />
+                  Endless possibilities.
+                </span>
+              </div>
+            </div>
             <section
-              className="capacity-panel"
-              aria-labelledby="capacity-heading"
+              className={`upload-panel ${dragging ? "dragging" : ""}`}
+              aria-labelledby="upload-heading"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node))
+                  setDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                if (e.dataTransfer.files.length !== 1) {
+                  setError("Upload one file at a time.");
+                  return;
+                }
+                void sendFile(e.dataTransfer.files[0]);
+              }}
             >
               <div className="panel-label">
                 <span>
-                  <Globe2 size={15} />
-                  Shared by everyone
+                  <Upload size={15} />
+                  QUICK UPLOAD
                 </span>
-                <span className="status-dot" />
+                <span className="subtle">10 MB / file</span>
               </div>
-              <h2 id="capacity-heading">
-                Community
-                <br />
-                storage.
-              </h2>
-              <div className="capacity-numbers">
-                <strong>{capacity ? bytes(capacity.used) : "—"}</strong>
-                <span>/ 9.5 GB</span>
-              </div>
-              <div
-                className="progress-track capacity-track"
-                role="progressbar"
-                aria-label="Global storage used"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(percent)}
-              >
-                <div style={{ width: `${Math.min(percent, 100)}%` }} />
-              </div>
-              <div className="capacity-legend">
-                <span>
-                  <i />
-                  {capacity
-                    ? `${Math.max(0, 100 - percent).toFixed(1)}% available`
-                    : "Loading capacity"}
-                </span>
-                <span>Used + reserved</span>
-              </div>
-              <p>
-                One community pool. Expired files make
-                <br className="desktop-break" /> room for the next thing.
-              </p>
-            </section>
-            <section className="rules-panel">
-              <div className="rule-icon">
-                <Link2 size={18} />
-              </div>
-              <div>
-                <h3>One link. No extra steps.</h3>
+              <div className="drop-content">
+                <div className="upload-glyph">
+                  <Upload size={33} strokeWidth={1.35} />
+                </div>
+                <h2 id="upload-heading">
+                  {upload
+                    ? upload.processing
+                      ? "Checking your file…"
+                      : "Sending your file…"
+                    : dragging
+                      ? "Drop it right here"
+                      : "Drop your file here"}
+                </h2>
                 <p>
-                  Anyone with the link can download.
-                  <br />
-                  No account needed to receive.
+                  {upload
+                    ? upload.name
+                    : "Images, audio, and video up to 10 MB"}
                 </p>
-              </div>
-              <ArrowUpRight size={17} />
-            </section>
-          </aside>
-        </div>
-        {error && (
-          <div className="notice error" role="alert">
-            <ShieldCheck size={18} />
-            <span>{error}</span>
-            <button
-              className="icon-button"
-              aria-label="Dismiss error"
-              onClick={() => setError("")}
-            >
-              <X size={17} />
-            </button>
-          </div>
-        )}
-        <section
-          id="files"
-          className="files-section"
-          aria-labelledby="files-heading"
-        >
-          <div className="section-top">
-            <div>
-              <h2 id="files-heading">
-                Your files{" "}
-                <span className="count">
-                  {files.length.toString().padStart(2, "0")}
-                </span>
-              </h2>
-              <p>
-                {session
-                  ? "A short stay. A useful link."
-                  : "Sign in with GitHub to keep track of what you share."}
-              </p>
-            </div>
-            {session &&
-              capacity?.personal !== null &&
-              capacity?.personal !== undefined && (
-                <span className="personal-storage">
-                  <HardDrive size={14} />
-                  {bytes(capacity.personal)} of 100 MB used
-                </span>
-              )}
-          </div>
-          {files.length ? (
-            <div className="file-table">
-              <div className="table-heading">
-                <span>File</span>
-                <span>Expires</span>
-                <span>Share</span>
-              </div>
-              {files.map((file) => (
-                <div className="file-row" key={file.id}>
-                  <div className="file-info">
-                    <div className="file-icon">
-                      <FileIcon mime={file.mime} />
+                {upload ? (
+                  <div className="upload-progress" role="status">
+                    <div
+                      className="progress-track"
+                      role="progressbar"
+                      aria-label="File upload"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={upload.progress}
+                    >
+                      <div style={{ width: `${upload.progress}%` }} />
                     </div>
-                    <div>
-                      <strong title={file.name}>{file.name}</strong>
-                      <span>
-                        {bytes(file.size)} <b>·</b>{" "}
-                        {file.mime.startsWith("image/")
-                          ? "Image"
-                          : file.mime.startsWith("audio/")
-                            ? "Audio"
-                            : "Video"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="file-expiry">
-                    <Clock3 size={14} />
-                    <span title={new Date(file.expiresAt).toLocaleString()}>
-                      {Math.max(
-                        0,
-                        Math.ceil((file.expiresAt - Date.now()) / 86_400_000),
-                      )}{" "}
-                      days left
+                    <span>
+                      {upload.processing
+                        ? "Validating and saving securely"
+                        : `${upload.progress}% uploaded`}
                     </span>
                   </div>
-                  <div className="file-actions">
-                    <button
-                      className="button copy-button"
-                      onClick={() => void copy(file)}
-                    >
-                      {copied === file.id ? (
-                        <CheckCheck size={15} />
-                      ) : (
-                        <Copy size={15} />
-                      )}
-                      {copied === file.id ? "Copied" : "Copy link"}
-                    </button>
-                    <a
-                      className="icon-button"
-                      href={file.url}
-                      aria-label={`Download ${file.name}`}
-                    >
-                      <ArrowDownToLine size={17} />
-                    </a>
-                    <button
-                      className="icon-button delete-button"
-                      aria-label={`Delete ${file.name}`}
-                      onClick={() => setDeleting(file)}
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-files">
-              <div className="empty-icon">
-                <Link2 size={24} strokeWidth={1.4} />
+                ) : (
+                  <button
+                    className="button button-primary"
+                    disabled={
+                      isPending ||
+                      (!!capacity && capacity.used >= capacity.total)
+                    }
+                    onClick={chooseFile}
+                  >
+                    <Plus size={18} />
+                    {capacity && capacity.used >= capacity.total
+                      ? "Storage is full"
+                      : "Choose a file"}
+                    <ChevronRight size={15} />
+                  </button>
+                )}
+                <input
+                  ref={input}
+                  type="file"
+                  tabIndex={-1}
+                  accept={ACCEPT}
+                  className="visually-hidden"
+                  aria-label="Choose a file to upload"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void sendFile(file);
+                    e.target.value = "";
+                  }}
+                />
+                {!upload && (
+                  <span className="upload-hint">
+                    {session
+                      ? "or drag and drop it here"
+                      : "Sign in with GitHub to upload"}
+                  </span>
+                )}
               </div>
+              <div className="upload-bottom">
+                <span>
+                  <Clock3 size={15} />
+                  Auto-expires in 10 days
+                </span>
+                <span>
+                  <ShieldCheck size={15} />
+                  Public link
+                </span>
+              </div>
+            </section>
+          </div>
+          {latestFile && session && (
+            <div className="share-result" role="status">
+              <span className="result-check">
+                <Check size={20} />
+              </span>
               <div>
-                <h3>No files yet.</h3>
-                <p>
-                  {session
-                    ? "Upload your first file. We’ll keep it here for 10 days."
-                    : "Sign in with GitHub, upload a file, and send it on its way."}
-                </p>
+                <strong>Ready to pass along.</strong>
+                <p>{latestFile.name}</p>
               </div>
               <button
-                className="text-button"
-                disabled={isPending}
-                onClick={chooseFile}
+                className="button button-primary"
+                onClick={() => void copy(latestFile)}
               >
-                {session ? "Add your first file" : "Get started"}
-                <ArrowUpRight size={17} />
+                {copied === latestFile.id ? (
+                  <CheckCheck size={16} />
+                ) : (
+                  <Copy size={16} />
+                )}
+                {copied === latestFile.id ? "Copied!" : "Copy link"}
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Dismiss uploaded file"
+                onClick={() => setLatestFile(null)}
+              >
+                <X size={18} />
               </button>
             </div>
           )}
-        </section>
-        <div className="details-strip">
+          {error && (
+            <div className="notice error" role="alert">
+              <AlertCircle size={18} />
+              <span>{error}</span>
+              <button
+                className="icon-button"
+                aria-label="Dismiss error"
+                onClick={() => setError("")}
+              >
+                <X size={17} />
+              </button>
+            </div>
+          )}
+          <section
+            id="files"
+            className="files-section"
+            aria-labelledby="files-heading"
+          >
+            <div className="section-top">
+              <div>
+                <h2 id="files-heading">
+                  File library{" "}
+                  <span className="count">
+                    {files.length.toString().padStart(2, "0")}
+                  </span>
+                </h2>
+                <p>
+                  {session
+                    ? "Everything you’re sharing, all in one place."
+                    : "Sign in with GitHub to keep track of what you share."}
+                </p>
+              </div>
+              {session &&
+                capacity?.personal !== null &&
+                capacity?.personal !== undefined && (
+                  <span className="personal-storage">
+                    <HardDrive size={14} />
+                    {bytes(capacity.personal)} of 100 MB used
+                  </span>
+                )}
+            </div>
+            <div className="library-controls">
+              <div
+                className="filter-tabs"
+                role="group"
+                aria-label="Filter files"
+              >
+                {[
+                  { id: "all", name: "All files" },
+                  { id: "image", name: "Images" },
+                  { id: "audio", name: "Audio" },
+                  { id: "video", name: "Video" },
+                ].map(({ id, name }) => (
+                  <button
+                    key={id}
+                    aria-pressed={fileType === id}
+                    className={fileType === id ? "selected" : ""}
+                    onClick={() => setFileType(id)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="view-controls"
+                role="group"
+                aria-label="File layout"
+              >
+                <button
+                  className={`icon-button ${view === "list" ? "selected" : ""}`}
+                  aria-label="List view"
+                  aria-pressed={view === "list"}
+                  onClick={() => setView("list")}
+                >
+                  <List size={17} />
+                </button>
+                <button
+                  className={`icon-button ${view === "grid" ? "selected" : ""}`}
+                  aria-label="Grid view"
+                  aria-pressed={view === "grid"}
+                  onClick={() => setView("grid")}
+                >
+                  <LayoutGrid size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="file-toolbar">
+              <label className="search-field">
+                <Search size={17} />
+                <input
+                  type="search"
+                  placeholder="Search your files…"
+                  aria-label="Search your files"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </label>
+              <label className="sort-field">
+                <span>Sort by</span>
+                <select
+                  aria-label="Sort files"
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value)}
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="expiring">Expiring soon</option>
+                  <option value="name">File name</option>
+                </select>
+              </label>
+            </div>
+            {filesError && (
+              <div className="notice" role="alert">
+                <AlertCircle size={18} />
+                <span>{filesError}</span>
+                <button className="text-button" onClick={() => void refresh()}>
+                  <RefreshCw size={14} />
+                  Retry
+                </button>
+              </div>
+            )}
+            {loadingFiles || isPending ? (
+              <div className="loading-files" role="status">
+                <LoaderCircle size={20} className="spin" /> Loading your files…
+              </div>
+            ) : files.length ? (
+              <div
+                className={`file-table ${view === "grid" ? "file-grid" : ""}`}
+              >
+                <div className="table-heading">
+                  <span>File</span>
+                  <span>Expires</span>
+                  <span>Share</span>
+                </div>
+                {visibleFiles.map((file) => (
+                  <div className="file-row" key={file.id}>
+                    <div className="file-info">
+                      <div className="file-icon">
+                        <FileIcon mime={file.mime} />
+                      </div>
+                      <div>
+                        <strong title={file.name}>{file.name}</strong>
+                        <span>
+                          {bytes(file.size)} <b>·</b>{" "}
+                          {file.mime.startsWith("image/")
+                            ? "Image"
+                            : file.mime.startsWith("audio/")
+                              ? "Audio"
+                              : "Video"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="file-expiry">
+                      <Clock3 size={14} />
+                      <span title={new Date(file.expiresAt).toLocaleString()}>
+                        {Math.max(
+                          0,
+                          Math.ceil((file.expiresAt - Date.now()) / 86_400_000),
+                        )}{" "}
+                        days left
+                      </span>
+                    </div>
+                    <div className="file-actions">
+                      <button
+                        className="button copy-button"
+                        onClick={() => void copy(file)}
+                      >
+                        {copied === file.id ? (
+                          <CheckCheck size={15} />
+                        ) : (
+                          <Copy size={15} />
+                        )}
+                        {copied === file.id ? "Copied" : "Copy link"}
+                      </button>
+                      <a
+                        className="icon-button"
+                        href={file.url}
+                        aria-label={`Download ${file.name}`}
+                      >
+                        <ArrowDownToLine size={17} />
+                      </a>
+                      <button
+                        className="icon-button delete-button"
+                        aria-label={`Delete ${file.name}`}
+                        onClick={() => setDeleting(file)}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!visibleFiles.length && (
+                  <div className="no-results">
+                    <Search size={24} />
+                    <h3>No matching files</h3>
+                    <p>Try another name or reset the file filters.</p>
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setQuery("");
+                        setFileType("all");
+                      }}
+                    >
+                      Reset filters <X size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : !filesError ? (
+              <div className="empty-files">
+                <div className="empty-icon">
+                  <FolderOpen size={29} strokeWidth={1.3} />
+                </div>
+                <div>
+                  <h3>A clear space. A fresh start.</h3>
+                  <p>
+                    {session
+                      ? "Upload your first file. We’ll keep it here for 10 days."
+                      : "Sign in with GitHub, upload a file, and send it on its way."}
+                  </p>
+                </div>
+                <button
+                  className="text-button"
+                  disabled={isPending}
+                  onClick={chooseFile}
+                >
+                  <Plus size={15} />
+                  {session ? "Upload your first file" : "Sign in to upload"}
+                  <ArrowUpRight size={17} />
+                </button>
+              </div>
+            ) : null}
+          </section>
+          <div className="workspace-note">
+            <ShieldCheck size={14} />
+            <span>Only media files. Automatically expires. Always simple.</span>
+            <button onClick={() => setRules(true)}>
+              View supported formats <ArrowUpRight size={13} />
+            </button>
+          </div>
+        </main>
+        <footer className="wrap footer">
+          <span>Small files. Short stays.</span>
           <span>
-            <FileImage size={15} />
-            Images
+            Made to be passed along. <Sun size={13} />
           </span>
-          <span>
-            <FileAudio size={15} />
-            Audio
-          </span>
-          <span>
-            <FileVideo size={15} />
-            Video
-          </span>
-          <button onClick={() => setRules(true)}>
-            Supported formats <ArrowUpRight size={13} />
-          </button>
-          <span className="strip-note">
-            Temporary by design. Share thoughtfully.
-          </span>
-        </div>
-      </main>
-      <footer className="wrap footer">
-        <span className="footer-brand">
-          <Sun size={17} /> zora <span>Small files, short stays.</span>
-        </span>
-        <button onClick={() => setReporting(true)}>
-          <Flag size={13} />
-          Report a file
-        </button>
-        <span>Built for the in-between.</span>
-      </footer>
+        </footer>
+      </div>
       {message && (
         <div className="toast" role="status">
           <Check size={18} />
@@ -746,6 +1072,7 @@ export function Dashboard() {
                   });
                   if (!response.ok)
                     throw new Error((await response.json()).error);
+                  if (latestFile?.id === deleting.id) setLatestFile(null);
                   setDeleting(null);
                   setMessage("File deleted. Its link is no longer available.");
                   void refresh();
