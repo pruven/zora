@@ -192,6 +192,7 @@ export function Dashboard() {
       return;
     }
     setUpload({ name: file.name, progress: 0, processing: false });
+    let completionRequested = false;
     try {
       const initialized = await fetch("/api/files", {
         method: "POST",
@@ -236,6 +237,7 @@ export function Dashboard() {
       });
       activeRequest.current = null;
       setUpload({ name: file.name, progress: 100, processing: true });
+      completionRequested = true;
       const completed = await fetch(`/api/files/${target.id}/complete`, {
         method: "POST",
         // Bound the client wait beyond the server's 120-second completion budget.
@@ -246,9 +248,12 @@ export function Dashboard() {
         throw new Error(result.error || "Could not finish the upload.");
       setMessage(`${result.file.name} is ready to share.`);
     } catch (cause) {
+      const timeoutMessage = completionRequested
+        ? "The request timed out. Refresh your files before trying again; processing may still finish."
+        : "Starting the upload timed out. Please try again.";
       setError(
         cause instanceof Error && cause.name === "TimeoutError"
-          ? "The request timed out. Refresh your files before trying again; processing may still finish."
+          ? timeoutMessage
           : cause instanceof Error
             ? cause.message
             : "Upload failed.",
