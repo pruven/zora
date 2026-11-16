@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { dataDir } from "./db";
+import { dataDir } from "./local-data";
 
 function isCloud() {
   return process.env.STORAGE_DRIVER === "s3";

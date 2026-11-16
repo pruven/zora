@@ -1,4 +1,4 @@
-import { db, StoredFile } from "@/lib/db";
+import { findFile } from "@/lib/files";
 import { getObject } from "@/lib/storage";
 import { appURL } from "@/lib/config";
 export const runtime = "nodejs";
@@ -8,9 +8,6 @@ export async function GET(
   context: { params: Promise<{ id: string; name: string }> },
 ) {
   const { id, name } = await context.params;
-  const file = db
-    .prepare("SELECT * FROM files WHERE id = ? AND status = 'ready'")
-    .get(id) as StoredFile | undefined;
   const headers = {
     "Cache-Control": "private, no-store, max-age=0",
     "CDN-Cache-Control": "no-store",
@@ -20,23 +17,23 @@ export async function GET(
     "Referrer-Policy": "no-referrer",
     "X-Robots-Tag": "noindex, nofollow, noarchive",
   };
-  if (!file || file.name !== name)
-    return new Response("File not found.", { status: 404, headers });
-  if (file.expiresAt <= Date.now())
-    return new Response("This file has expired.", { status: 410, headers });
-  const isolated =
-    process.env.FILE_BASE_URL &&
-    new URL(process.env.FILE_BASE_URL).origin !== new URL(appURL()).origin &&
-    new URL(request.url).origin === new URL(process.env.FILE_BASE_URL).origin;
   try {
+    const file = await findFile(id);
+    if (!file || file.status !== "ready" || file.name !== name)
+      return new Response("File not found.", { status: 404, headers });
+    if (file.expiresAt <= Date.now())
+      return new Response("This file has expired.", { status: 410, headers });
+    const isolated =
+      process.env.FILE_BASE_URL &&
+      new URL(process.env.FILE_BASE_URL).origin !== new URL(appURL()).origin &&
+      new URL(request.url).origin === new URL(process.env.FILE_BASE_URL).origin;
     const body = await getObject(id);
     // Recheck after origin I/O so an expiry during retrieval cannot open a new download.
+    const current = await findFile(id);
     if (
-      !db
-        .prepare(
-          "SELECT id FROM files WHERE id = ? AND status = 'ready' AND expiresAt > ?",
-        )
-        .get(id, Date.now())
+      !current ||
+      current.status !== "ready" ||
+      current.expiresAt <= Date.now()
     )
       return new Response("This file is no longer available.", {
         status: 410,

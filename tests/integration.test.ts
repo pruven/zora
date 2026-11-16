@@ -13,12 +13,15 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import sharp from "sharp";
-import Database from "better-sqlite3";
+import { testPostgres } from "./postgres";
+import { eq, count } from "drizzle-orm";
+import { files } from "../lib/schema";
 
 test(
   "GitHub-only OAuth, ownership, upload validation, sharing, reporting, deletion, and expiry",
   { timeout: 120_000 },
   async () => {
+    const database = await testPostgres();
     const directory = mkdtempSync(join(tmpdir(), "zora-integration-"));
     const generatedFiles = ["next-env.d.ts", "tsconfig.json"]
       .filter(existsSync)
@@ -36,6 +39,8 @@ test(
           GITHUB_CLIENT_ID: "test-github-client-id",
           GITHUB_CLIENT_SECRET: "test-github-client-secret",
           DATA_DIR: directory,
+          DATABASE_URL: database.url,
+          DATABASE_URL_UNPOOLED: database.url,
           STORAGE_DRIVER: "local",
           BETTER_AUTH_URL: base,
           BETTER_AUTH_SECRET: "integration-test-secret-only-00000000000000000",
@@ -210,10 +215,10 @@ test(
       assert.equal((await remove(file.id, cookie)).status, 200);
       assert.equal((await fetch(file.url)).status, 404);
       const { file: expired } = await (await send("expires.png", png)).json();
-      const database = new Database(join(directory, "zora.sqlite"));
-      database
-        .prepare("UPDATE files SET expiresAt = ? WHERE id = ?")
-        .run(Date.now() - 1, expired.id);
+      await database.db
+        .update(files)
+        .set({ expiresAt: Date.now() - 1 })
+        .where(eq(files.id, expired.id));
       assert.equal((await fetch(expired.url)).status, 410);
       assert.equal(
         (await fetch(`${base}/api/cleanup`, { method: "POST" })).status,
@@ -225,19 +230,13 @@ test(
       });
       assert.equal(cleaned.status, 200);
       assert.equal((await cleaned.json()).deleted, 1);
-      assert.equal(
-        (
-          database.prepare("SELECT COUNT(*) AS n FROM files").get() as {
-            n: number;
-          }
-        ).n,
-        0,
-      );
-      database.close();
+      const [remaining] = await database.db.select({ n: count() }).from(files);
+      assert.equal(remaining.n, 0);
     } finally {
       const exited = once(server, "exit");
       server.kill("SIGTERM");
       if (server.exitCode === null) await exited;
+      await database.stop();
       rmSync(directory, { recursive: true, force: true });
       for (const file of generatedFiles) writeFileSync(file.path, file.content);
     }

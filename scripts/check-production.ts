@@ -1,4 +1,5 @@
 const required = [
+  "DATABASE_URL",
   "BETTER_AUTH_SECRET",
   "BETTER_AUTH_URL",
   "GITHUB_CLIENT_ID",
@@ -25,4 +26,6 @@ if (!process.env.BETTER_AUTH_URL!.startsWith("https://"))
   throw new Error("Production BETTER_AUTH_URL must use HTTPS.");
 if (process.env.STORAGE_DRIVER !== "s3")
   throw new Error("Configure private R2 or B2 storage for production.");
+if (!/^postgres(?:ql)?:\/\//.test(process.env.DATABASE_URL!))
+  throw new Error("DATABASE_URL must be a PostgreSQL connection string.");
 console.log("Production configuration is valid.");

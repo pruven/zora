@@ -1,25 +1,12 @@
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import sharp from "sharp";
-
-const directory = mkdtempSync(join(tmpdir(), "zora-unit-"));
-process.env.DATA_DIR = directory;
-process.env.STORAGE_DRIVER = "local";
-const { validateUpload, validateName, readLimitedBody } =
-  await import("../lib/validation");
-const { reserve, usage, consumeUploadAttempt, cleanup } =
-  await import("../lib/files");
-const { db } = await import("../lib/db");
-const { putObject } = await import("../lib/storage");
-const { GLOBAL_BYTES, USER_BYTES, MAX_FILE_BYTES, RETENTION_MS } =
-  await import("../lib/config");
-after(() => {
-  db.close();
-  rmSync(directory, { recursive: true, force: true });
-});
+import {
+  validateUpload,
+  validateName,
+  readLimitedBody,
+} from "../lib/validation";
+import { MAX_FILE_BYTES } from "../lib/config";
 
 test("blocks scripts, executables, archives, active documents, paths, and double extensions", () => {
   for (const name of [
@@ -95,40 +82,4 @@ test("enforces byte limits on streams without relying on Content-Length", async 
     ),
     /10 MB/,
   );
-});
-test("counts pending reservations and refuses per-user and global overfill", () => {
-  db.prepare("DELETE FROM files").run();
-  const reserved = reserve("one", "a.png", "image/png", USER_BYTES);
-  assert.equal(usage(), USER_BYTES);
-  assert.throws(() => reserve("one", "b.png", "image/png", 1), /100 MB/);
-  db.prepare("UPDATE files SET size = ? WHERE id = ?").run(
-    GLOBAL_BYTES,
-    reserved.id,
-  );
-  assert.throws(() => reserve("two", "b.png", "image/png", 1), /full/);
-  db.prepare("DELETE FROM files").run();
-});
-test("daily upload attempts are limited, including rejected uploads", () => {
-  for (let i = 0; i < 20; i++) consumeUploadAttempt("limited", 100_000_000);
-  assert.throws(
-    () => consumeUploadAttempt("limited", 100_000_000),
-    /daily limit/,
-  );
-  assert.doesNotThrow(() => consumeUploadAttempt("limited", 200_000_000));
-});
-test("cleanup deletes expired objects and releases accounted bytes", async () => {
-  const file = reserve(
-    "cleanup-user",
-    "photo.png",
-    "image/png",
-    3,
-    Date.now() - RETENTION_MS - 1,
-  );
-  await putObject(file.id, Buffer.from("abc"), file.mime);
-  db.prepare("UPDATE files SET status = 'ready' WHERE id = ?").run(file.id);
-  assert.equal(usage(), 3);
-  const result = await cleanup();
-  assert.equal(result.deleted, 1);
-  assert.equal(result.failed, 0);
-  assert.equal(usage(), 0);
 });

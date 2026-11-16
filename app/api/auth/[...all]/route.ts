@@ -1,4 +1,4 @@
-import { auth, ensureAuth } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 export const runtime = "nodejs";
 async function handle(request: Request) {
   if (
@@ -10,7 +10,6 @@ async function handle(request: Request) {
       { status: 503 },
     );
   }
-  await ensureAuth();
   return auth.handler(request);
 }
 export { handle as GET, handle as POST };

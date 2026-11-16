@@ -1,7 +1,7 @@
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { MAX_FILE_BYTES } from "./config";
-import { HttpError } from "./http";
+import { HttpError } from "./errors";
 
 const formats: Record<string, string[]> = {
   "image/jpeg": ["jpg", "jpeg"],

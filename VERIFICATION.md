@@ -1,11 +1,12 @@
 # Verification
 
-- `npm run typecheck`: passes.
-- `npm test`: eight passing tests, including a real HTTP integration flow with an isolated local database and storage. GitHub OAuth responses are mocked in the test process; OAuth state/callback/session handling and rejection of email/password endpoints are exercised. Live GitHub consent is not verified without OAuth credentials.
-- `npm run build`: production compilation, type checking, and page generation pass.
-- `npm run cleanup` and `npm run reports`: local command smoke checks pass.
-- Production performance checks at desktop and phone widths: zero failures. Both widths warn about approximately 505 KiB of parsed JavaScript (156 KiB compressed). No broken requests, long tasks, or blocking time were observed. Development-only JavaScript was excluded by checking the optimized build separately.
-- R2/B2 access and real production deployment are not tested; no credentials or deployment target were supplied.
+- `bun install --frozen-lockfile`: passes. Bun is the package manager; the app uses Node.js, Drizzle ORM, and PostgreSQL. SQLite dependencies have been removed.
+- `bun run typecheck`: passes.
+- `bun run test`: eleven passing tests against isolated local Postgres instances and object storage. Coverage includes migration application, parallel global and per-user quota reservations, concurrent attempt limits, cleanup, GitHub OAuth callbacks/sessions, disabled password endpoints, ownership, reporting, deletion, expiry, and file validation. Live GitHub token/profile/email responses are mocked only in the test child process.
+- `bun run build`: production compilation, type checking, and page generation are checked without requiring a live database connection.
+- Database changes are committed Drizzle migrations, applied explicitly with `bun run db:migrate`. No live Neon database or old SQLite records were modified.
+- R2/B2 access, live GitHub consent, production deployment, and live Neon SSL/pooling are not verified without the relevant credentials.
+- Earlier UI performance/layout checks below predate the database migration; no frontend layout changes were made for this migration.
 
 ## Layout review
 

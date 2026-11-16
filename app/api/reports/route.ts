@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { findFile, reportFile } from "@/lib/files";
 import { failure, HttpError, sameOrigin } from "@/lib/http";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
@@ -32,17 +32,10 @@ export async function POST(request: Request) {
     }
     if (typeof id !== "string" || !/^[a-f0-9]{48}$/.test(id))
       throw new HttpError(400, "Invalid file link.");
-    if (
-      !db
-        .prepare(
-          "SELECT id FROM files WHERE id = ? AND status = 'ready' AND expiresAt > ?",
-        )
-        .get(id, Date.now())
-    )
+    const file = await findFile(id);
+    if (!file || file.status !== "ready" || file.expiresAt <= Date.now())
       throw new HttpError(404, "File not found or already expired.");
-    db.prepare(
-      "INSERT OR IGNORE INTO reports (fileId,createdAt) VALUES (?,?)",
-    ).run(id, Date.now());
+    await reportFile(id);
     return Response.json({ success: true });
   } catch (error) {
     return failure(error);
