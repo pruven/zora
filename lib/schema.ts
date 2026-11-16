@@ -100,10 +100,15 @@ export const files = pgTable(
     name: text("name").notNull(),
     mime: text("mime").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
+    reservedBytes: bigint("reserved_bytes", { mode: "number" }),
+    stagingSize: bigint("staging_size", { mode: "number" }),
+    uploadExpiresAt: bigint("upload_expires_at", { mode: "number" }),
+    processingAt: bigint("processing_at", { mode: "number" }),
+    objectKey: text("object_key"),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
     status: text("status", {
-      enum: ["pending", "ready", "deleting"],
+      enum: ["pending", "processing", "ready", "deleting"],
     }).notNull(),
   },
   (t) => [
@@ -112,7 +117,7 @@ export const files = pgTable(
     check("files_positive_size", sql`${t.size} > 0`),
     check(
       "files_valid_status",
-      sql`${t.status} in ('pending', 'ready', 'deleting')`,
+      sql`${t.status} in ('pending', 'processing', 'ready', 'deleting')`,
     ),
   ],
 );

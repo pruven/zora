@@ -25,6 +25,7 @@ export function validateName(raw: string) {
   const name = raw.normalize("NFKC");
   if (
     !name ||
+    !name.isWellFormed() ||
     name.length > 160 ||
     /[\x00-\x1f\x7f/\\\u202a-\u202e\u2066-\u2069]/.test(name) ||
     name.startsWith(".") ||

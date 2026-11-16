@@ -192,44 +192,65 @@ export function Dashboard() {
       return;
     }
     setUpload({ name: file.name, progress: 0, processing: false });
-    const xhr = new XMLHttpRequest();
-    activeRequest.current = xhr;
-    xhr.open("POST", "/api/files");
-    xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
-    xhr.setRequestHeader("Content-Type", "application/octet-stream");
-    xhr.timeout = 120_000;
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable)
-        setUpload({
-          name: file.name,
-          progress: Math.round((event.loaded / event.total) * 100),
-          processing: event.loaded === event.total,
-        });
-    };
-    xhr.onload = () => {
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (xhr.status !== 201) throw new Error(data.error || "Upload failed.");
-        setMessage(`${data.file.name} is ready to share.`);
-        void refresh();
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Upload failed.");
-      } finally {
-        setUpload(null);
-        activeRequest.current = null;
-      }
-    };
-    xhr.onerror = () => {
-      setError("Connection lost. Please try again.");
+    try {
+      const initialized = await fetch("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, size: file.size }),
+      });
+      const target = await initialized.json();
+      if (!initialized.ok)
+        throw new Error(target.error || "Could not start the upload.");
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        activeRequest.current = xhr;
+        xhr.open(target.upload.method, target.upload.url);
+        for (const [name, value] of Object.entries(target.upload.headers))
+          xhr.setRequestHeader(name, String(value));
+        xhr.timeout = 120_000;
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable)
+            setUpload({
+              name: file.name,
+              progress: Math.round((event.loaded / event.total) * 100),
+              processing: event.loaded === event.total,
+            });
+        };
+        xhr.onload = () =>
+          xhr.status >= 200 && xhr.status < 300
+            ? resolve()
+            : reject(
+                new Error("The file could not be uploaded. Please try again."),
+              );
+        xhr.onerror = () =>
+          reject(
+            new Error(
+              "The upload connection failed. Check your connection and try again.",
+            ),
+          );
+        xhr.ontimeout = () =>
+          reject(new Error("The upload timed out. Please try again."));
+        xhr.onabort = () => reject(new Error("Upload cancelled."));
+        xhr.send(file);
+      });
+      activeRequest.current = null;
+      setUpload({ name: file.name, progress: 100, processing: true });
+      const completed = await fetch(`/api/files/${target.id}/complete`, {
+        method: "POST",
+      });
+      const result = await completed.json();
+      if (!completed.ok)
+        throw new Error(result.error || "Could not finish the upload.");
+      setMessage(`${result.file.name} is ready to share.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Upload failed.");
+      // Do not cancel a completion that may still be running after a network error.
+      // Its retained reservation and private staging object are recovered by cleanup.
+    } finally {
       setUpload(null);
       activeRequest.current = null;
-    };
-    xhr.ontimeout = () => {
-      setError("The upload timed out. Refresh your files before trying again.");
-      setUpload(null);
-      activeRequest.current = null;
-    };
-    xhr.send(file);
+      void refresh();
+    }
   }
   async function copy(file: SharedFile) {
     try {
@@ -445,7 +466,7 @@ export function Dashboard() {
                     ? `${Math.max(0, 100 - percent).toFixed(1)}% available`
                     : "Loading capacity"}
                 </span>
-                <span>Live storage</span>
+                <span>Used + reserved</span>
               </div>
               <p>
                 One community pool. Expired files make

@@ -8,13 +8,18 @@ import {
   USER_BYTES,
   RETENTION_MS,
   appURL,
+  MAX_FILE_BYTES,
+  UPLOAD_URL_SECONDS,
+  STAGING_GRACE_MS,
 } from "./config";
 import { HttpError } from "./errors";
-import { removeObject } from "./storage";
+import { removeObject, stagingKey } from "./storage";
 
 export async function usage(userId?: string) {
   const [result] = await db
-    .select({ bytes: sql<string>`coalesce(sum(${files.size}), 0)` })
+    .select({
+      bytes: sql<string>`coalesce(sum(coalesce(${files.reservedBytes}, ${files.size})), 0)`,
+    })
     .from(files)
     .where(userId ? eq(files.userId, userId) : undefined);
   return Number(result.bytes);
@@ -25,6 +30,7 @@ export async function reserve(
   mime: string,
   size: number,
   now = Date.now(),
+  staged = false,
 ) {
   return db.transaction(
     async (tx) => {
@@ -32,30 +38,40 @@ export async function reserve(
       // Read committed gives these SUM queries a fresh snapshot after acquiring the lock.
       await tx.execute(sql`select pg_advisory_xact_lock(20261117, 0)`);
       const [global] = await tx
-        .select({ bytes: sql<string>`coalesce(sum(${files.size}), 0)` })
+        .select({
+          bytes: sql<string>`coalesce(sum(coalesce(${files.reservedBytes}, ${files.size})), 0)`,
+        })
         .from(files);
       const [personal] = await tx
-        .select({ bytes: sql<string>`coalesce(sum(${files.size}), 0)` })
+        .select({
+          bytes: sql<string>`coalesce(sum(coalesce(${files.reservedBytes}, ${files.size})), 0)`,
+        })
         .from(files)
         .where(eq(files.userId, userId));
-      if (Number(global.bytes) + size > GLOBAL_BYTES)
+      const reservation = staged ? size + MAX_FILE_BYTES : size;
+      if (Number(global.bytes) + reservation > GLOBAL_BYTES)
         throw new HttpError(
           507,
           "Community storage is full. Existing files will stay until their expiry dates.",
         );
-      if (Number(personal.bytes) + size > USER_BYTES)
+      if (Number(personal.bytes) + reservation > USER_BYTES)
         throw new HttpError(
           409,
           "Your 100 MB storage allowance is full. Delete a file first.",
         );
+      const id = randomBytes(24).toString("hex");
       const [file] = await tx
         .insert(files)
         .values({
-          id: randomBytes(24).toString("hex"),
+          id,
           userId,
           name,
           mime,
           size,
+          reservedBytes: staged ? reservation : null,
+          stagingSize: staged ? size : null,
+          uploadExpiresAt: staged ? now + UPLOAD_URL_SECONDS * 1000 : null,
+          objectKey: staged ? `files/${id}` : null,
           createdAt: now,
           expiresAt: now + RETENTION_MS,
           status: "pending",
@@ -86,13 +102,11 @@ export async function consumeUploadAttempt(userId: string, now = Date.now()) {
           429,
           "Your daily limit is 20 upload attempts. Try again later.",
         );
-      await tx
-        .insert(uploadEvents)
-        .values({
-          id: randomBytes(24).toString("hex"),
-          userId,
-          createdAt: now,
-        });
+      await tx.insert(uploadEvents).values({
+        id: randomBytes(24).toString("hex"),
+        userId,
+        createdAt: now,
+      });
     },
     { isolationLevel: "read committed" },
   );
@@ -130,23 +144,28 @@ export async function findFile(id: string, userId?: string) {
     .limit(1);
   return file;
 }
-export async function markReady(id: string) {
+export async function deleteFile(id: string, now = Date.now()) {
   const [file] = await db
     .update(files)
-    .set({ status: "ready" })
-    .where(and(eq(files.id, id), eq(files.status, "pending")))
+    .set({ status: "deleting" })
+    .where(eq(files.id, id))
     .returning();
-  if (!file)
-    throw new HttpError(
-      409,
-      "This upload is no longer available. Please try again.",
-    );
-}
-export async function deleteFile(id: string) {
-  await db.update(files).set({ status: "deleting" }).where(eq(files.id, id));
-  await removeObject(id);
-  // Reports cascade. Failed object deletion retains both the row and its accounted bytes.
-  await db.delete(files).where(eq(files.id, id));
+  if (!file) return false;
+  await removeObject(file.objectKey || id);
+  // Keep both the row and the single-write staging object while a signed PUT can still be used.
+  // A caller could have begun a request just before expiry, so include a conservative grace period.
+  if (
+    file.uploadExpiresAt !== null &&
+    file.uploadExpiresAt + STAGING_GRACE_MS > now
+  )
+    return false;
+  if (file.processingAt !== null && file.processingAt + STAGING_GRACE_MS > now)
+    return false;
+  if (file.stagingSize !== null) await removeObject(stagingKey(id));
+  await db
+    .delete(files)
+    .where(and(eq(files.id, id), eq(files.status, "deleting")));
+  return true;
 }
 export async function reportFile(id: string) {
   // One statement ties insertion to a currently active row; deletion cannot leave orphan reports.
@@ -176,24 +195,71 @@ export async function cleanup(now = Date.now()) {
     .where(
       or(
         lte(files.expiresAt, now),
-        eq(files.status, "deleting"),
-        and(eq(files.status, "pending"), lt(files.createdAt, now - 3_600_000)),
+        and(
+          eq(files.status, "deleting"),
+          or(
+            sql`${files.processingAt} is null`,
+            lte(files.processingAt, now - STAGING_GRACE_MS),
+          ),
+          or(
+            sql`${files.uploadExpiresAt} is null`,
+            lte(files.uploadExpiresAt, now - STAGING_GRACE_MS),
+          ),
+        ),
+        and(
+          eq(files.status, "pending"),
+          or(
+            and(
+              sql`${files.uploadExpiresAt} is null`,
+              lt(files.createdAt, now - STAGING_GRACE_MS),
+            ),
+            lte(files.uploadExpiresAt, now - STAGING_GRACE_MS),
+          ),
+        ),
+        and(
+          eq(files.status, "processing"),
+          lt(files.processingAt, now - STAGING_GRACE_MS),
+        ),
       ),
     )
     .limit(100);
   let deleted = 0,
-    failed = 0;
+    failed = 0,
+    stagingDeleted = 0;
   for (const file of expired) {
     try {
-      await deleteFile(file.id);
-      deleted++;
+      if (await deleteFile(file.id, now)) deleted++;
     } catch (error) {
       console.error("Cleanup failed:", file.id, error);
+      failed++;
+    }
+  }
+  const completed = await db
+    .select()
+    .from(files)
+    .where(
+      and(
+        eq(files.status, "ready"),
+        sql`${files.stagingSize} is not null`,
+        lte(files.uploadExpiresAt, now - STAGING_GRACE_MS),
+      ),
+    )
+    .limit(100);
+  for (const file of completed) {
+    try {
+      await removeObject(stagingKey(file.id));
+      await db
+        .update(files)
+        .set({ stagingSize: null, reservedBytes: file.size })
+        .where(and(eq(files.id, file.id), eq(files.status, "ready")));
+      stagingDeleted++;
+    } catch (error) {
+      console.error("Staging cleanup failed:", file.id, error);
       failed++;
     }
   }
   await db
     .delete(uploadEvents)
     .where(lt(uploadEvents.createdAt, now - 86_400_000));
-  return { deleted, failed };
+  return { deleted, failed, stagingDeleted };
 }

@@ -58,14 +58,14 @@ The same GitHub action creates an account on first sign-in and signs it in after
 
 ## Upload policy
 
-- Maximum 10,000,000 bytes per file, checked while streaming and again after processing.
+- Maximum 10,000,000 bytes per file. The signed upload is bound to its declared byte length, and the server checks actual object size, reads with a byte limit, and checks the result again after processing.
 - Allowlist: JPG, JPEG, PNG, WebP, MP3, WAV, MP4, WebM, OGG, FLAC.
 - Scripts, executables, archives, HTML, SVG, PDF, and office documents are blocked. Documents are excluded because many formats support scripts, macros, or embedded objects.
 - The server checks normalized filenames, dangerous double extensions, and detected binary content. Client `Content-Type` is never trusted.
 - Images are decoded with a 40-megapixel limit and re-encoded, stripping metadata and trailing payloads. This also flattens animated WebP to its first frame.
-- Media signatures are checked; media is not transcoded or scanned by antivirus. A format allowlist is not a guarantee that arbitrary media is harmless. Downloads default to attachments with `nosniff` and a sandbox CSP.
+- Media signatures are checked; media is not transcoded or scanned by antivirus. A format allowlist is not a guarantee that arbitrary media is harmless. R2 downloads default to attachments with the validated MIME type. The application gateway returns no-store and sandbox headers; gateway headers do not transfer to the R2 response.
 - Accounts have 100 MB of storage and 20 upload attempts per rolling 24 hours. Invalid attempts count. The shared application limit is 9.5 GB, leaving headroom below a provider's 10 GB allowance.
-- Capacity includes pending uploads and objects awaiting deletion. Transactions reserve bytes before storage writes, so concurrent uploads cannot oversubscribe the pool.
+- Capacity includes pending uploads, temporary staging bytes, processed files, and objects awaiting deletion. A new upload reserves its declared size plus 10 MB for the processed output. After validation that becomes actual output bytes plus retained staging bytes. This is deliberately conservative so both copies fit within the pool and per-account allowance. Cleanup releases staging reservations after the upload authorization and grace period expire.
 - Links are bearer links: anyone with the URL can download. Recipients can retain copies after expiry. No public directory or bucket listing is exposed.
 
 ## Production configuration
@@ -90,31 +90,45 @@ S3_ACCESS_KEY_ID=<scoped access key>
 S3_SECRET_ACCESS_KEY=<scoped secret>
 ```
 
-The same adapter supports B2's S3 endpoint and region. **Routing B2 downloads through this Node server does not by itself guarantee Bandwidth Alliance egress**; that depends on the server's actual network route/provider. R2 avoids that dependency. Free storage and egress do not make hosting, requests, domains, or databases universally free.
+## Direct uploads and R2 CORS
 
-Use a dedicated bucket with versioning disabled, or configure deletion of noncurrent versions as well. Hidden versions and files written outside this app are not reflected in its meter. Use provider billing controls independently of the app's quota.
+The deployed app uses a private R2 bucket and three steps:
 
-```sh
-bun run db:migrate
-bun run build
-bun run start
-```
+1. `POST /api/files` accepts a small JSON object (`name`, `size`), checks the GitHub session and attempt limit, reserves quota, and returns a five-minute signed PUT URL for `staging/<id>`.
+2. The browser PUTs the file **directly to R2**. The signature covers its exact `Content-Length`, `Content-Type`, `Cache-Control`, and `If-None-Match: *`. The browser sets the byte length from the file automatically. Conditional writes prevent overwriting that staging key while its object exists. Client MIME declarations never approve a file.
+3. `POST /api/files/<id>/complete` has no file body. It atomically claims the pending upload, fetches its staging object from R2, validates the byte count and detected file type, sanitizes images with Sharp, and writes the approved output to `files/<id>`. Only then is the file published in the database. The PUT URL grants no write access to this final key. Repeated completion of a ready file is idempotent; concurrent completion returns a processing conflict. Validation failures never publish a link.
 
-`bun run start` checks required production configuration before launching. Run behind an HTTPS reverse proxy with an approximately 11 MB request-body limit and a request timeout. The app needs a Node.js-compatible host with PostgreSQL TCP connections and support for 10 MB uploads. With Postgres and R2/B2 configured, no persistent application disk is needed, and multiple app instances share the same database-backed quota locks. This is not a Cloudflare Worker build. `DATA_DIR` is used only for the optional local file-storage driver. Database and storage credentials stay on the server.
+The Vercel upload/completion requests carry only metadata. Server-side reads from R2 during validation do not put the file in an incoming Vercel request body. The local driver follows the same workflow through a development-only PUT route; that route returns 404 in cloud mode and production.
 
-Optional `FILE_BASE_URL` sets a separate file origin, routed to this app's `/f/*` paths. Inline media is enabled only when that configured origin differs from the authentication origin and matches the actual request origin. Otherwise downloads remain attachments. Keep auth cookies host-only. Configure Cloudflare to **bypass caching on `/f/*`, `/api/*`**; do not override the returned `no-store` headers with a cache-everything rule. Direct links use the application gateway so each new request checks expiry and deletion before serving bytes.
+Configure **R2 → your bucket → Settings → CORS Policy** with `r2-cors.example.json`. Replace `https://your-app-domain.com` with your real Vercel/custom origin. List every origin you actually use, including localhost only for development. The policy permits PUT/GET/HEAD and the upload headers; it does not make the bucket public. See [Cloudflare's CORS guide](https://developers.cloudflare.com/r2/buckets/cors/) and [presigned URL documentation](https://developers.cloudflare.com/r2/api/s3/presigned-urls/).
+
+Keep `r2.dev` public access disabled and do not attach a public bucket domain. `FILE_BASE_URL` is an optional separate **app gateway** origin, not an R2 public URL. The app's `/f/<id>/<name>` link checks the database status and ten-day expiry, then redirects to a signed R2 GET URL valid for at most 60 seconds and never past the file's deadline. Downloads go directly from R2 to the recipient. The gateway's redirect is not cached. The local development driver serves bytes from disk instead.
+
+The storage adapter can work with other S3-compatible providers only if they support the signed headers and atomic `If-None-Match` PUT behavior. R2 is the deployment target tested with the S3 fixture; live B2 compatibility is not verified. Free storage and R2 egress do not make hosting, requests, processing, domains, or databases universally free.
+
+## Deploy to Vercel
+
+1. Run `bun run db:migrate` against your intended database before deploying. Migration `0001_staged_uploads` adds nullable fields and preserves existing metadata and share links; old objects keep their existing keys.
+2. Import the repository into Vercel as a Next.js project. `vercel.json` uses `bun install --frozen-lockfile` and validates production configuration before building. Set Node.js 22.16+ and enable Fluid compute. The completion and cleanup routes request up to 120 seconds of execution time.
+3. Add the production environment variables above in Vercel, especially `STORAGE_DRIVER=s3`, `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, GitHub credentials, R2 credentials, and `CRON_SECRET`. `DATA_DIR` is not needed with R2. Use a separate GitHub OAuth App for production with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback. Deploy previews need matching auth and R2 CORS configuration; adding a preview URL to CORS alone does not configure GitHub OAuth.
+4. Apply the R2 CORS policy for the deployed origin. Add backup lifecycle rules: delete objects under `staging/` after one day and under `files/` after eleven days. Lifecycle rules are crash/orphan backstops, not the exact link-expiry clock.
+5. Configure the external cleanup schedule below. No cron schedule is silently installed by the repository. Choose a Node.js function region close to Neon, then test upload, copy-link/download, and deletion through the deployed site.
+
+The same code can run on another Node.js host with PostgreSQL TCP access. With Postgres and R2 configured, no persistent application disk is needed. Multiple app instances share the database-backed quota and completion locks. This is not a Cloudflare Worker build. `DATA_DIR` is used only by the optional local development driver.
 
 ## Expiry and physical deletion
 
-Links return HTTP 410 after exactly ten days, independently of cleanup. Expiry also gets checked after storage retrieval. Bytes already downloaded cannot be recalled, and a download that began before expiry may complete afterward.
+The ten-day expiry starts when validation finishes. The app gateway rejects new requests after the deadline; each signed R2 download URL also expires no later than that deadline. Recipients can keep copies, and downloads that started before expiry can finish afterward. Deletion hides the file immediately and removes the published R2 object.
 
-Run cleanup every five minutes from the application directory using the same database and R2/B2 environment settings:
+Staging objects and reservations remain until the upload URL has expired plus a one-hour grace period. This prevents an issued PUT URL from recreating a deleted staging key while it is still valid, and allows for in-flight requests. Failed, cancelled, and abandoned uploads remain private and count toward capacity during that interval. A recently cancelled processing request retains its reservation for an hour as well. Cleanup then removes staging, releases its reserved bytes, retries failed deletions, and recovers stuck processing. Configure the provider lifecycle backstop for crashes and unusually delayed requests; the application meter is not a provider-enforced billing cap.
+
+Run cleanup every five minutes from a machine with the same database and R2 environment settings:
 
 ```cron
 */5 * * * * cd /absolute/path/to/zora && /absolute/path/to/bun run cleanup >> /var/log/zora-cleanup.log 2>&1
 ```
 
-Alternatively, configure an external scheduler to POST `/api/cleanup` with `Authorization: Bearer <CRON_SECRET>`. The endpoint rejects missing/incorrect secrets. This project supplies both cleanup mechanisms; it does not install a system scheduler. Cleanup handles 100 files per invocation; increase frequency if the backlog grows. Failed deletions retain quota accounting and retry on the next run. Stale reservations are recovered after an hour. Configure a provider-side lifecycle rule as a backup for orphan objects, including incomplete multipart uploads and noncurrent versions if applicable.
+For Vercel, use an external scheduler to send `POST https://your-app-domain/api/cleanup` with `Authorization: Bearer <CRON_SECRET>`. GET is also supported with the same authentication for schedulers that require it. Use HTTPS and store the secret in the scheduler's secret/header settings. The repository supplies the endpoint; it does not register a cron job or assume a paid scheduling plan. Cleanup handles up to 100 expired/tombstoned files and 100 ready staging objects per invocation; increase frequency if a backlog grows. Responses report `deleted`, `stagingDeleted`, and `failed` counts.
 
 ## Reports and moderation
 
@@ -135,6 +149,6 @@ bun run test
 bun run build
 ```
 
-Tests cover script/executable blocking, double extensions, renamed executable content, image normalization, bounded streaming, transactional quotas, attempt limits, and cleanup. Integration tests start a separate app on port 3107 with a disposable real Postgres instance and local object storage, then exercise GitHub OAuth initiation, state validation, callback handling, sessions, disabled password endpoints, access control, public downloads, reporting, deletion, and expiry. GitHub token/profile/email responses are mocked only in the test child process using a Node preload module; application OAuth logic remains unchanged. Tests do not call live GitHub or R2/B2, or validate real credentials or provider billing. Tests use `.next-test/` for isolation. `embedded-postgres` supplies a local Postgres binary; tests do not use Docker, a live Neon account, or your configured database. The test helper restores bundled symlinks if needed; it does not create system users and must run as a non-root user. Database tests also exercise concurrent reservations, concurrent daily attempt limits, cleanup, and migrations.
+Tests cover script/executable blocking, double extensions, renamed executable content, image normalization, bounded streaming, transactional quotas, attempt limits, and cleanup. Integration tests start a separate app on port 3107 with a disposable real Postgres instance and local object storage, then exercise GitHub OAuth initiation, state validation, callback handling, sessions, disabled password endpoints, access control, public downloads, reporting, deletion, and expiry. GitHub token/profile/email responses are mocked only in the test child process using a Node preload module; application OAuth logic remains unchanged. Tests do not call live GitHub or R2/B2, or validate real credentials or provider billing. Tests use `.next-test/` for isolation. `embedded-postgres` supplies a local Postgres binary; tests do not use Docker, a live Neon account, or your configured database. The test helper restores bundled symlinks if needed; it does not create system users and must run as a non-root user. Database tests also exercise concurrent reservations, concurrent daily attempt limits, cleanup, and migrations. The cloud integration flow uses a local S3 fixture that verifies AWS SigV4 presigned URLs and exact signed headers, stores objects privately, and enforces single-write staging. It tests a 5 MB direct upload/download, ownership, size tampering, replay, simultaneous completion, cancellation during processing, and cleanup. It does not prove live R2 browser CORS or Vercel deployment behavior.
 
 The app uses a dark neutral and lime interface, with Mona Sans / Geist Mono and Lucide interface icons. No stock images, generated imagery, invented customer data, or example uploads are used. Fonts have system fallbacks when Google Fonts is unavailable.

@@ -5,7 +5,13 @@ import { promisify } from "node:util";
 import { eq, sql, count } from "drizzle-orm";
 import { testPostgres } from "./postgres";
 import { files, user, uploadEvents } from "../lib/schema";
-import { GLOBAL_BYTES, USER_BYTES, RETENTION_MS } from "../lib/config";
+import {
+  GLOBAL_BYTES,
+  USER_BYTES,
+  RETENTION_MS,
+  MAX_FILE_BYTES,
+  STAGING_GRACE_MS,
+} from "../lib/config";
 
 const postgres = await testPostgres();
 process.env.DATABASE_URL = postgres.url;
@@ -15,7 +21,7 @@ process.env.STORAGE_DRIVER = "local";
 const { reserve, usage, consumeUploadAttempt, cleanup } =
   await import("../lib/files");
 const { pool, db } = await import("../lib/db");
-const { putObject } = await import("../lib/storage");
+const { putObject, stagingKey } = await import("../lib/storage");
 beforeEach(async () => {
   await db.execute(sql`truncate table files, upload_events, "user" cascade`);
   await db.insert(user).values(
@@ -47,12 +53,13 @@ test("migration and maintenance commands use Postgres and migrations are repeata
   const history = await db.execute(
     sql`select count(*) as n from drizzle.__drizzle_migrations`,
   );
-  assert.equal(Number((history.rows[0] as { n: string }).n), 1);
+  assert.equal(Number((history.rows[0] as { n: string }).n), 2);
   await run("bun", ["run", "reports"], { env });
   const cleanup = await run("bun", ["run", "cleanup"], { env });
   assert.deepEqual(JSON.parse(cleanup.stdout.trim()), {
     deleted: 0,
     failed: 0,
+    stagingDeleted: 0,
   });
 });
 
@@ -114,5 +121,68 @@ test("cleanup deletes expired objects and releases accounted bytes", async () =>
   const result = await cleanup();
   assert.equal(result.deleted, 1);
   assert.equal(result.failed, 0);
+  assert.equal(await usage(), 0);
+});
+
+test("staging and processed-output reservations remain accounted for until upload authorization expires", async () => {
+  const now = Date.now();
+  const file = await reserve(
+    "one",
+    "small.png",
+    "application/octet-stream",
+    3,
+    now,
+    true,
+  );
+  assert.equal(await usage(), MAX_FILE_BYTES + 3);
+  await putObject(
+    stagingKey(file.id),
+    Buffer.from("abc"),
+    "application/octet-stream",
+  );
+  await putObject(file.objectKey!, Buffer.from("abc"), "image/png");
+  await db
+    .update(files)
+    .set({ status: "ready", size: 3, reservedBytes: 6 })
+    .where(eq(files.id, file.id));
+  assert.equal((await cleanup(now)).stagingDeleted, 0);
+  assert.equal(await usage(), 6);
+  assert.equal(
+    (await cleanup(file.uploadExpiresAt! + STAGING_GRACE_MS + 1))
+      .stagingDeleted,
+    1,
+  );
+  assert.equal(await usage(), 3);
+});
+test("abandoned uploads and cancelled processing retain reservations until safe cleanup", async () => {
+  const now = Date.now();
+  const file = await reserve(
+    "one",
+    "pending.png",
+    "application/octet-stream",
+    3,
+    now,
+    true,
+  );
+  await cleanup(now);
+  assert.equal(await usage(), MAX_FILE_BYTES + 3);
+  await cleanup(file.uploadExpiresAt! + STAGING_GRACE_MS + 1);
+  assert.equal(await usage(), 0);
+  const active = await reserve(
+    "one",
+    "active.png",
+    "application/octet-stream",
+    3,
+    now,
+    true,
+  );
+  const processingAt = active.uploadExpiresAt! + STAGING_GRACE_MS - 1000;
+  await db
+    .update(files)
+    .set({ status: "deleting", processingAt })
+    .where(eq(files.id, active.id));
+  await cleanup(processingAt + 2000);
+  assert.equal(await usage(), MAX_FILE_BYTES + 3);
+  await cleanup(processingAt + STAGING_GRACE_MS + 1);
   assert.equal(await usage(), 0);
 });

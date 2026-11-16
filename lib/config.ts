@@ -3,6 +3,9 @@ export const GLOBAL_BYTES = 9_500_000_000; // headroom below the provider's 10 G
 export const USER_BYTES = 100_000_000;
 export const DAILY_UPLOADS = 20;
 export const RETENTION_MS = 10 * 24 * 60 * 60 * 1000;
+export const UPLOAD_URL_SECONDS = 300;
+export const STAGING_GRACE_MS = 60 * 60 * 1000;
+export const DOWNLOAD_URL_SECONDS = 60;
 export const ACCEPT = ".jpg,.jpeg,.png,.webp,.mp3,.wav,.mp4,.webm,.ogg,.flac";
 export const appURL = () =>
   process.env.BETTER_AUTH_URL || "http://localhost:3000";

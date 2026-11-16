@@ -2,11 +2,11 @@
 
 - `bun install --frozen-lockfile`: passes. Bun is the package manager; the app uses Node.js, Drizzle ORM, and PostgreSQL. SQLite dependencies have been removed.
 - `bun run typecheck`: passes.
-- `bun run test`: eleven passing tests against isolated local Postgres instances and object storage. Coverage includes migration application, parallel global and per-user quota reservations, concurrent attempt limits, cleanup, GitHub OAuth callbacks/sessions, disabled password endpoints, ownership, reporting, deletion, expiry, and file validation. Live GitHub token/profile/email responses are mocked only in the test child process.
+- `bun run test`: sixteen passing tests against isolated local Postgres instances and object storage. Coverage includes local and signed-S3 staged upload flows, a 5 MB direct upload/download, AWS SigV4/header verification, size tampering, single-write replay protection, concurrent completion, deletion during processing, staging quota retention/release, migration application, parallel global and per-user quota reservations, concurrent attempt limits, cleanup, GitHub OAuth callbacks/sessions, disabled password endpoints, ownership, reporting, deletion, expiry, and file validation. Live GitHub token/profile/email responses are mocked only in the test child process.
 - `bun run build`: production compilation, type checking, and page generation are checked without requiring a live database connection.
-- Database changes are committed Drizzle migrations, applied explicitly with `bun run db:migrate`. No live Neon database or old SQLite records were modified.
-- R2/B2 access, live GitHub consent, production deployment, and live Neon SSL/pooling are not verified without the relevant credentials.
-- Earlier UI performance/layout checks below predate the database migration; no frontend layout changes were made for this migration.
+- Database changes are versioned Drizzle migrations, applied explicitly with `bun run db:migrate`. No live Neon database or old SQLite records were modified.
+- R2/B2 access, live GitHub consent, production deployment, and live Neon SSL/pooling and browser R2 CORS are not verified without the relevant credentials.
+- Earlier UI performance/layout checks below predate the database migration; the uploader now uses direct PUT and completion requests; the page composition is unchanged.
 
 ## Layout review
 
