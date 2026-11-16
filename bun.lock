@@ -18,6 +18,7 @@
         "sharp": "^0.35.5",
       },
       "devDependencies": {
+        "@pruven/zeke": "^0.2.1",
         "@types/node": "^26.6.6",
         "@types/pg": "^8.23.1",
         "@types/react": "^19.3.0",
@@ -238,6 +239,8 @@
     "@noble/ciphers": ["@noble/ciphers@2.4.0", "", {}, "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw=="],
 
     "@noble/hashes": ["@noble/hashes@2.4.0", "", {}, "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="],
+
+    "@pruven/zeke": ["@pruven/zeke@0.2.1", "", { "bin": { "zeke": "dist/bin/zeke.js" } }, "sha512-dr1hkI/YuwBrcc+jahNzjpvIXA3R/SAu9xOyoVPsruxX1WFDGvtTZvNIbhGs0t1KTyLr6NK1XhejffN5B9o2mA=="],
 
     "@smithy/core": ["@smithy/core@3.40.0", "", { "dependencies": { "@smithy/types": "^4.20.0", "tslib": "^2.6.2" } }, "sha512-DssGno52pzZ5m6RlDtyKuBIpZNPg9pqgs0CnNDKz9IatxCsmvNmJNn5Zn6rf77MthZo9wf89OvZFhTY/RwxhxQ=="],
 
