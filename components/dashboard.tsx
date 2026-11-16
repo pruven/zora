@@ -160,6 +160,7 @@ export function Dashboard() {
     setFilesError("");
     setLoadingFiles(isPending || !!userId);
     setCapacity(null);
+    setStorageError(false);
     setLatestFile(null);
     setDeleting(null);
     return () => {
@@ -184,7 +185,7 @@ export function Dashboard() {
   }, [menuOpen]);
 
   const refresh = useCallback(async () => {
-    if (isPending || currentUser.current !== userId) return;
+    if (currentUser.current !== userId) return;
     const generation = ++refreshGeneration.current;
     const isCurrent = () =>
       generation === refreshGeneration.current &&
@@ -203,6 +204,7 @@ export function Dashboard() {
         }
       })(),
       (async () => {
+        if (isPending) return;
         try {
           if (userId) {
             const response = await fetch("/api/files", { cache: "no-store" });
