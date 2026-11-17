@@ -365,6 +365,7 @@ p {
   font-size: 14px;
 }
 .mobile-close,
+.mobile-brand,
 .menu-toggle,
 .sidebar-backdrop,
 .mobile-title-break {
@@ -1644,9 +1645,35 @@ form input::placeholder {
     grid-column: 1;
     grid-row: 1;
     justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+  .sidebar-brand {
+    justify-content: flex-end;
+    margin-bottom: 20px;
+  }
+  .sidebar-brand .brand {
+    display: none;
+  }
+  .mobile-brand {
+    display: flex !important;
+    flex-shrink: 0;
+    font-size: 26px;
+    gap: 6px;
+  }
+  .intro-actions .menu-toggle {
+    flex-shrink: 0;
   }
   .intro-actions .account {
     margin-left: auto;
+    min-width: 0;
+    gap: 8px;
+  }
+  .intro-actions .account-name {
+    min-width: 0;
+  }
+  .intro-actions .account > button {
+    flex-shrink: 0;
   }
   .intro-copy {
     grid-column: 1;
