@@ -558,6 +558,7 @@ export function Dashboard() {
             href="https://github.com/pruven/zora"
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => setMenuOpen(false)}
           >
             <MarkGithubIcon size={17} aria-hidden="true" />
             View on GitHub
@@ -582,6 +583,10 @@ export function Dashboard() {
               >
                 <Menu size={20} />
               </button>
+              <a href="/" className="brand mobile-brand" aria-label="Zora home">
+                <Sun size={24} strokeWidth={1.7} />
+                zora
+              </a>
               <div className="account">
                 {session ? (
                   <>
