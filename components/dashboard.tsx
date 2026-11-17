@@ -584,7 +584,7 @@ export function Dashboard() {
                 <Menu size={20} />
               </button>
               <a href="/" className="brand mobile-brand" aria-label="Zora home">
-                <Sun size={24} strokeWidth={1.7} />
+                <Sun size={18} strokeWidth={1.7} />
                 zora
               </a>
               <div className="account">
