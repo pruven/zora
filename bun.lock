@@ -8,6 +8,7 @@
         "@aws-sdk/client-s3": "^3.1169.0",
         "@aws-sdk/s3-request-presigner": "^3.1169.0",
         "@better-auth/drizzle-adapter": "^1.7.25",
+        "@primer/octicons-react": "^19.42.0",
         "better-auth": "^1.7.25",
         "drizzle-orm": "^0.45.4",
         "file-type": "^22.3.0",
@@ -242,6 +243,8 @@
     "@noble/ciphers": ["@noble/ciphers@2.4.0", "", {}, "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw=="],
 
     "@noble/hashes": ["@noble/hashes@2.4.0", "", {}, "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="],
+
+    "@primer/octicons-react": ["@primer/octicons-react@19.42.0", "", { "peerDependencies": { "react": ">=16.3" } }, "sha512-KLGHFBK28ubfEhRf1+B4OzfLDO3ItXwqYsPAdrfOPPzN3uD2Jp7rYdE5rLkdCHCzkyjh14eH5vL0pHq8dyJmsA=="],
 
     "@pruven/zeke": ["@pruven/zeke@0.2.1", "", { "bin": { "zeke": "dist/bin/zeke.js" } }, "sha512-dr1hkI/YuwBrcc+jahNzjpvIXA3R/SAu9xOyoVPsruxX1WFDGvtTZvNIbhGs0t1KTyLr6NK1XhejffN5B9o2mA=="],
 

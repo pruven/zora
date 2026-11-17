@@ -1,5 +1,6 @@
 "use client";
 
+import { MarkGithubIcon } from "@primer/octicons-react";
 import {
   useCallback,
   useEffect,
@@ -552,6 +553,16 @@ export function Dashboard() {
             Report a file
             <ArrowUpRight size={14} />
           </button>
+          <a
+            className="sidebar-help"
+            href="https://github.com/pruven/zora"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <MarkGithubIcon size={17} aria-hidden="true" />
+            View on GitHub
+            <ArrowUpRight size={14} aria-hidden="true" />
+          </a>
           <div className="sidebar-foot">
             <span className="status-dot" /> Temporary by design.
           </div>

@@ -311,7 +311,7 @@ p {
   border-radius: 7px;
   transition: background 0.15s;
 }
-.sidebar-help > svg:last-child {
+.sidebar-help > svg:last-child:not(:first-child) {
   margin-left: auto;
   color: #b2b2b2;
 }
