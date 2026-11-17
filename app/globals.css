@@ -1644,8 +1644,9 @@ form input::placeholder {
   .intro-actions {
     grid-column: 1;
     grid-row: 1;
-    justify-content: space-between;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: 44px auto minmax(0, 1fr);
+    gap: 4px;
     min-width: 0;
   }
   .sidebar-brand {
@@ -1658,8 +1659,10 @@ form input::placeholder {
   .mobile-brand {
     display: flex !important;
     flex-shrink: 0;
-    font-size: 26px;
-    gap: 6px;
+    font-size: 20px;
+    line-height: 1;
+    letter-spacing: -0.9px;
+    gap: 5px;
   }
   .intro-actions .menu-toggle {
     flex-shrink: 0;
@@ -1667,13 +1670,20 @@ form input::placeholder {
   .intro-actions .account {
     margin-left: auto;
     min-width: 0;
-    gap: 8px;
+    gap: 4px;
   }
   .intro-actions .account-name {
     min-width: 0;
+    max-width: 96px;
+    font-size: 12px;
   }
   .intro-actions .account > button {
     flex-shrink: 0;
+  }
+  .intro-actions .account .button {
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 12px;
   }
   .intro-copy {
     grid-column: 1;
